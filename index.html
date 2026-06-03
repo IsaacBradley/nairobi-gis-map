@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nairobi GIS - Land Information System</title>
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Leaflet CSS -->
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet" />
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <!-- PMTiles and VectorGrid -->
+  <script src="https://unpkg.com/pmtiles@2.11.0/dist/index.js"></script>
+  <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+    .search-card {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      z-index: 1000;
+      width: 300px;
+      max-height: 90vh;
+      overflow-y: auto;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(5px);
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .layers-card {
+      position: absolute;
+      bottom: 1rem;
+      left: 1rem;
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      border-radius: 8px;
+    }
+    .location-btn {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 1000;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .basemap-card {
+      position: absolute;
+      bottom: 1rem;
+      right: 1rem;
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      border-radius: 8px;
+    }
+    .ncc-brand {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1200;
+      transition: opacity 0.3s ease;
+      background: rgba(255,255,255,0.9);
+      padding: 8px 16px;
+      border-radius: 32px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      pointer-events: none;
+    }
+    .ncc-brand.is-hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .ncc-title {
+      font-weight: 600;
+      font-size: 1rem;
+      color: #0a3e6d;
+      margin: 0;
+      white-space: nowrap;
+    }
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.7);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 5px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .toast-notify {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 2000;
+      min-width: 260px;
+      background: #212529;
+      color: white;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+    }
+    .toast-notify.show {
+      opacity: 1;
+    }
+    .stats-badge {
+      font-size: 0.7rem;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="nccBrand" class="ncc-brand">
+    <div class="ncc-title">🏛️ NAIROBI COUNTY · REAL TIME GIS BASE MAP</div>
+  </div>
+
+  <div class="card search-card shadow">
+    <div class="card-body">
+      <h6 class="card-title mb-3 text-primary fw-bold">Land Info Search</h6>
+      <div class="mb-3">
+        <label class="form-label small">Search by Parcel or LR Number</label>
+        <div class="input-group input-group-sm">
+          <input id="parcelInput" type="text" class="form-control" placeholder="e.g., LR 209/12345" autocomplete="off">
+          <button id="parcelBtn" class="btn btn-primary" type="button"><i class="bi bi-search"></i></button>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small d-block">Search by Coordinates</label>
+        <div class="row g-2">
+          <div class="col">
+            <input id="latInput" type="number" step="any" class="form-control form-control-sm" placeholder="Latitude" autocomplete="off">
+          </div>
+          <div class="col">
+            <input id="lngInput" type="number" step="any" class="form-control form-control-sm" placeholder="Longitude" autocomplete="off">
+          </div>
+        </div>
+        <button id="coordBtn" class="btn btn-primary btn-sm w-100 mt-2">Go</button>
+      </div>
+      <div>
+        <label class="form-label small">Search by Place Name</label>
+        <div class="input-group input-group-sm">
+          <input id="placeInput" type="text" class="form-control" placeholder="e.g., KICC, Westlands" autocomplete="off">
+          <button id="placeBtn" class="btn btn-primary" type="button"><i class="bi bi-search"></i></button>
+        </div>
+      </div>
+      <hr class="my-2">
+      <div class="small text-muted" id="dataStatus">
+        <i class="bi bi-cloud-arrow-down"></i> Loading parcels...
+      </div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <button id="locateBtn" class="btn btn-outline-primary location-btn"><i class="bi bi-geo-alt"></i> My Location</button>
+
+  <div class="card layers-card shadow-sm">
+    <div class="card-header py-1 px-2 d-flex justify-content-between align-items-center">
+      <span class="small fw-semibold">MAP LAYERS</span>
+      <button class="btn btn-sm btn-link p-0" data-bs-toggle="collapse" data-bs-target="#layersCollapse"><i class="bi bi-chevron-up"></i></button>
+    </div>
+    <div id="layersCollapse" class="collapse show">
+      <ul class="list-group list-group-flush small" id="layerList"></ul>
+    </div>
+  </div>
+
+  <div class="card basemap-card shadow-sm">
+    <div class="card-header py-1 px-2"><span class="small fw-semibold">BASEMAPS</span></div>
+    <ul class="list-group list-group-flush small" id="basemapList"></ul>
+  </div>
+
+  <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+    <div class="loading-spinner"></div>
+    <div id="loadingMessage">Loading PMTiles data...</div>
+    <div class="stats-badge">134MB optimized for fast streaming</div>
+  </div>
+  <div id="toastMsg" class="toast-notify">
+    <i class="bi bi-info-circle-fill"></i> <span id="toastText">Message</span>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <script>
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const toastMsg = document.getElementById('toastMsg');
+    const toastText = document.getElementById('toastText');
+
+    function showLoading(show, message = 'Loading...') {
+      if (show) {
+        document.getElementById('loadingMessage').textContent = message;
+        loadingOverlay.style.display = 'flex';
+      } else {
+        loadingOverlay.style.display = 'none';
+      }
+    }
+
+    function showToast(message, isError = false) {
+      toastText.innerText = message;
+      toastMsg.style.background = isError ? '#b91c1c' : '#1e3a5f';
+      toastMsg.classList.add('show');
+      setTimeout(() => toastMsg.classList.remove('show'), 4000);
+    }
+
+    const logoEl = document.getElementById('nccBrand');
+    function hideLogo() {
+      if (logoEl && !logoEl.classList.contains('is-hidden')) {
+        logoEl.classList.add('is-hidden');
+      }
+    }
+
+    // Initialize map
+    const map = L.map('map').setView([-1.287, 36.82], 14);
+
+    // Basemaps
+    const basemaps = {
+      Streets: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }),
+      Satellite: L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { subdomains: ['mt0','mt1','mt2','mt3'], attribution: '© Google' }),
+      Terrain: L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', { subdomains: ['mt0','mt1','mt2','mt3'], attribution: '© Google' }),
+      Topographic: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { attribution: '© OpenTopoMap' })
+    };
+    basemaps.Streets.addTo(map);
+
+    // Placeholder layers
+    const wardsLayer = L.layerGroup();
+    const subCountiesLayer = L.layerGroup();
+    const surveyBlocksLayer = L.layerGroup();
+    const planningZonesLayer = L.layerGroup();
+
+    let parcelVectorLayer = null;
+    let parcelIndex = [];
+
+    let overlayLayers = {
+      'Land Parcels': null,
+      'Wards': wardsLayer,
+      'Sub‑Counties': subCountiesLayer,
+      'Survey Blocks': surveyBlocksLayer,
+      'Planning Zones': planningZonesLayer
+    };
+
+    function rebuildLayerUI() {
+      const layerList = document.getElementById('layerList');
+      if (!layerList) return;
+      layerList.innerHTML = '';
+      Object.entries(overlayLayers).forEach(([name, layer], idx) => {
+        if (!layer) return;
+        const id = `layerChk${idx}`;
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        const isChecked = map.hasLayer(layer);
+        li.innerHTML = `<input class="form-check-input me-1" type="checkbox" id="${id}" ${isChecked ? 'checked' : ''}> <label class="form-check-label" for="${id}">${name}</label>`;
+        layerList.appendChild(li);
+        li.querySelector('input').addEventListener('change', (e) => {
+          e.target.checked ? layer.addTo(map) : map.removeLayer(layer);
+        });
+      });
+    }
+
+    // Basemap UI
+    const basemapList = document.getElementById('basemapList');
+    Object.entries(basemaps).forEach(([name, layer], idx) => {
+      const id = `basemapRad${idx}`;
+      const li = document.createElement('li');
+      li.className = 'list-group-item';
+      li.innerHTML = `<input class="form-check-input me-1" type="radio" name="basemapRad" id="${id}" ${map.hasLayer(layer) ? 'checked' : ''}> <label class="form-check-label" for="${id}">${name}</label>`;
+      basemapList.appendChild(li);
+      li.querySelector('input').addEventListener('change', e => {
+        if (e.target.checked) {
+          Object.values(basemaps).forEach(b => map.removeLayer(b));
+          layer.addTo(map);
+        }
+      });
+    });
+
+    // Load PMTiles
+    async function loadPMTiles() {
+      showLoading(true, 'Loading parcels from PMTiles...');
+      try {
+        const pmtilesSource = new pmtiles.PMTiles('parcels.pmtiles');
+        const pmtilesProtocol = new pmtiles.Protocol();
+        
+        parcelVectorLayer = L.vectorGrid.protobuf(pmtilesProtocol.getTileUrl(pmtilesSource), {
+          vectorTileLayerStyles: {
+            parcels: { weight: 1.5, color: '#2c6e9e', fillColor: '#4d9de0', fillOpacity: 0.3 },
+            default: { weight: 1, color: '#3388ff', fillColor: '#4d9de0', fillOpacity: 0.25 }
+          },
+          interactive: true
+        });
+        
+        parcelVectorLayer.on('click', (e) => {
+          const props = e.layer.properties;
+          L.popup()
+            .setLatLng(e.latlng)
+            .setContent(`<strong>${props.lr || props.parcel_id || 'Parcel'}</strong><br>Owner: ${props.owner || 'N/A'}<br>Area: ${props.area || 'N/A'}`)
+            .openOn(map);
+        });
+        
+        overlayLayers['Land Parcels'] = parcelVectorLayer;
+        parcelVectorLayer.addTo(map);
+        rebuildLayerUI();
+        
+        document.getElementById('dataStatus').innerHTML = '<i class="bi bi-check-circle text-success"></i> Parcels loaded ✓';
+        showToast('✅ Parcels loaded successfully!', false);
+        
+        // Load search index
+        await loadSearchIndex();
+      } catch (err) {
+        console.error(err);
+        document.getElementById('dataStatus').innerHTML = '<i class="bi bi-exclamation-triangle text-danger"></i> Failed to load parcels';
+        showToast(`⚠️ Error: ${err.message}`, true);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    async function loadSearchIndex() {
+      try {
+        const response = await fetch('parcels_index.csv');
+        if (response.ok) {
+          const csvText = await response.text();
+          Papa.parse(csvText, {
+            header: true,
+            dynamicTyping: true,
+            complete: (results) => {
+              parcelIndex = results.data;
+              console.log(`Indexed ${parcelIndex.length} parcels`);
+            }
+          });
+        }
+      } catch (err) {
+        console.log('No search index found');
+      }
+    }
+
+    // Search functions
+    async function searchParcelByLR(lrNumber) {
+      hideLogo();
+      if (parcelIndex.length === 0) {
+        showToast("Search index not available", true);
+        return;
+      }
+      const found = parcelIndex.find(p => 
+        (p.lr || p.LR || p.parcel_id || '').toString().toLowerCase() === lrNumber.toLowerCase()
+      );
+      if (found && found.lat && found.lng) {
+        map.setView([found.lat, found.lng], 18);
+        L.marker([found.lat, found.lng])
+          .addTo(map)
+          .bindPopup(`<strong>${found.lr || found.parcel_id}</strong><br>Owner: ${found.owner || 'N/A'}<br>Area: ${found.area || 'N/A'}`)
+          .openPopup();
+        showToast(`Found: ${found.lr || found.parcel_id}`, false);
+      } else {
+        showToast(`Parcel "${lrNumber}" not found`, true);
+      }
+    }
+
+    let tempCoordMarker = null;
+    function searchByCoords(lat, lng) {
+      hideLogo();
+      if (isNaN(lat) || isNaN(lng)) {
+        showToast("Enter valid coordinates", true);
+        return;
+      }
+      if (tempCoordMarker) map.removeLayer(tempCoordMarker);
+      map.setView([lat, lng], 18);
+      tempCoordMarker = L.marker([lat, lng]).addTo(map)
+        .bindPopup(`📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
+        .openPopup();
+    }
+
+    let placeMarker = null;
+    function searchPlaceName(placeName) {
+      hideLogo();
+      showLoading(true, 'Searching location...');
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(placeName)}&limit=1`)
+        .then(res => res.json())
+        .then(results => {
+          if (!results.length) throw new Error('Not found');
+          const { lat, lon, display_name } = results[0];
+          if (placeMarker) map.removeLayer(placeMarker);
+          map.setView([lat, lon], 16);
+          placeMarker = L.marker([lat, lon]).addTo(map).bindPopup(`🏙️ ${display_name}`).openPopup();
+        })
+        .catch(() => showToast(`Place "${placeName}" not found`, true))
+        .finally(() => showLoading(false));
+    }
+
+    // Event listeners
+    document.getElementById('parcelBtn').addEventListener('click', () => {
+      const val = document.getElementById('parcelInput').value.trim();
+      if (val) searchParcelByLR(val);
+    });
+    document.getElementById('coordBtn').addEventListener('click', () => {
+      searchByCoords(parseFloat(latInput.value), parseFloat(lngInput.value));
+    });
+    document.getElementById('placeBtn').addEventListener('click', () => {
+      const val = document.getElementById('placeInput').value.trim();
+      if (val) searchPlaceName(val);
+    });
+    
+    ['parcelInput', 'latInput', 'lngInput', 'placeInput'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', hideLogo);
+    });
+
+    // Enter key support
+    document.getElementById('parcelInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('parcelBtn').click();
+    });
+    document.getElementById('placeInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('placeBtn').click();
+    });
+
+    // My Location
+    let locationMarker = null;
+    document.getElementById('locateBtn').addEventListener('click', () => {
+      if (!navigator.geolocation) return showToast("Geolocation not supported", true);
+      showLoading(true, 'Getting your location...');
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          if (locationMarker) map.removeLayer(locationMarker);
+          locationMarker = L.marker([latitude, longitude]).addTo(map);
+          L.circle([latitude, longitude], { radius: accuracy, color: '#3388ff', fillOpacity: 0.2 }).addTo(map);
+          map.setView([latitude, longitude], 18);
+          locationMarker.bindPopup(`📍 Your location ±${Math.round(accuracy)}m`).openPopup();
+          showLoading(false);
+        },
+        err => { showLoading(false); showToast(`Location error: ${err.message}`, true); }
+      );
+    });
+
+    // Start
+    loadPMTiles();
+  </script>
+</body>
+</html>
